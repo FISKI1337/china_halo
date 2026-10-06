@@ -1,0 +1,323 @@
+local Players = game:GetService("Players")
+local RS = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local lp = Players.LocalPlayer
+local cam = workspace.CurrentCamera
+
+local H = {On = true, Height = 1.4, Width = 1.1, Glow = 3, Thick = 0.15, Color = Color3.fromRGB(255, 240, 170)}
+local C = {On = true, Width = 1.6, Height = 1.0, X = 0, Y = 0.6, Z = 0, Color = Color3.fromRGB(255, 255, 255)}
+
+local PALETTE = {
+	"#FFFFFF", "#BFBFBF", "#7F7F7F", "#000000", "#FF3B3B", "#FF8A3B",
+	"#FFD93B", "#FFF0AA", "#A6FF3B", "#3BFF6B", "#3BFFD9", "#3BB8FF",
+	"#3B6BFF", "#7A3BFF", "#C73BFF", "#FF3BC7", "#FF7A9E", "#8B5A2B",
+	"#00A86B", "#B0E0E6", "#FFC0CB", "#E6E6FA", "#FFD700", "#DC143C",
+}
+
+-- ===== Нимб (плоское кольцо) =====
+local SEG = 48
+local folder = Instance.new("Folder", workspace)
+folder.Name = "AngelHalo"
+local parts = {}
+for i = 1, SEG do
+	local p = Instance.new("Part")
+	p.Anchored, p.CanCollide, p.CanQuery, p.CanTouch, p.CastShadow = true, false, false, false, false
+	p.Material = Enum.Material.Neon
+	p.Parent = folder
+	parts[i] = p
+end
+local core = Instance.new("Part")
+core.Anchored, core.CanCollide, core.CanQuery, core.CanTouch = true, false, false, false
+core.Transparency, core.Size = 1, Vector3.new(0.1, 0.1, 0.1)
+core.Parent = folder
+local light = Instance.new("PointLight", core)
+
+-- ===== China Hat (Drawing API) =====
+local N = 32
+local hasDrawing = typeof(Drawing) == "table" or typeof(Drawing) == "userdata"
+local tris, base, side = {}, {}, {}
+if hasDrawing then
+	for i = 1, N do
+		local t = Drawing.new("Triangle")
+		t.Filled, t.Transparency, t.Visible = true, 0.6, false
+		tris[i] = t
+		local l = Drawing.new("Line")
+		l.Thickness, l.Transparency, l.Visible = 2, 1, false
+		base[i] = l
+	end
+	for i = 1, 2 do
+		local l = Drawing.new("Line")
+		l.Thickness, l.Transparency, l.Visible = 2, 1, false
+		side[i] = l
+	end
+end
+
+local function hideHat()
+	for i = 1, N do tris[i].Visible = false; base[i].Visible = false end
+	side[1].Visible = false; side[2].Visible = false
+end
+
+RS.RenderStepped:Connect(function()
+	local char = lp.Character
+	local head = char and char:FindFirstChild("Head")
+
+	-- нимб
+	for _, p in ipairs(parts) do
+		p.Transparency = (head and H.On) and 0 or 1
+		p.Color = H.Color
+	end
+	light.Enabled = head ~= nil and H.On
+	light.Color, light.Brightness, light.Range = H.Color, H.Glow, 6 + H.Glow * 3
+	if head then
+		local c = head.Position + Vector3.new(0, H.Height, 0)
+		local len = 2 * H.Width * math.sin(math.pi / SEG) * 1.15
+		core.CFrame = CFrame.new(c)
+		for i, p in ipairs(parts) do
+			local a = (i - 1) / SEG * math.pi * 2
+			local pos = c + Vector3.new(math.cos(a), 0, math.sin(a)) * H.Width
+			local tan = Vector3.new(-math.sin(a), 0, math.cos(a))
+			p.Size = Vector3.new(H.Thick, 0.05, len)
+			p.CFrame = CFrame.lookAt(pos, pos + tan)
+		end
+	end
+
+	-- china hat
+	if not hasDrawing then return end
+	hideHat()
+	if not (head and C.On) then return end
+
+	local center = head.Position + Vector3.new(C.X, C.Y, C.Z)
+	local camPos = cam.CFrame.Position
+	local a3 = cam:WorldToViewportPoint(center + Vector3.new(0, C.Height, 0))
+	if a3.Z <= 0 then return end
+	local apex = Vector2.new(a3.X, a3.Y)
+
+	local pts = {}
+	for i = 1, N do
+		local a = (i - 1) / N * math.pi * 2
+		local v = cam:WorldToViewportPoint(center + Vector3.new(math.cos(a), 0, math.sin(a)) * C.Width)
+		if v.Z <= 0 then return end
+		pts[i] = Vector2.new(v.X, v.Y)
+	end
+
+	-- какие грани смотрят на камеру
+	local below = camPos.Y < center.Y
+	local facing = {}
+	for i = 1, N do
+		local m = (i - 0.5) / N * math.pi * 2
+		local dir = Vector3.new(math.cos(m), 0, math.sin(m))
+		local normal = Vector3.new(dir.X * C.Height, C.Width, dir.Z * C.Height)
+		local mid = center + dir * C.Width
+		facing[i] = normal:Dot(camPos - mid) > 0
+	end
+
+	local outline = Color3.new(1, 1, 1)
+	for i = 1, N do
+		-- сверху рисуем передние грани, снизу - внутренние (дальние)
+		local drawFace = (facing[i] ~= below)
+		local j = i % N + 1
+		if drawFace then
+			local t = tris[i]
+			t.PointA, t.PointB, t.PointC = apex, pts[i], pts[j]
+			t.Color, t.Visible = C.Color, true
+		end
+		-- снизу основание видно целиком
+		if drawFace or below then
+			local l = base[i]
+			l.From, l.To, l.Color, l.Visible = pts[i], pts[j], outline, true
+		end
+	end
+
+	-- боковой контур (граница между видимыми и невидимыми гранями)
+	local count = 0
+	for i = 1, N do
+		local prev = i == 1 and N or i - 1
+		if facing[i] ~= facing[prev] and count < 2 then
+			count += 1
+			side[count].From, side[count].To = apex, pts[i]
+			side[count].Color, side[count].Visible = outline, true
+		end
+	end
+end)
+
+-- ===== Меню =====
+local gui = Instance.new("ScreenGui")
+gui.Name, gui.ResetOnSpawn = "HaloMenu", false
+gui.Parent = (gethui and gethui()) or lp:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame", gui)
+frame.Size = UDim2.new(0, 250, 0, 400)
+frame.Position = UDim2.new(0, 20, 0.5, -200)
+frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+frame.Active, frame.Draggable = true, true
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+local stroke = Instance.new("UIStroke", frame)
+stroke.Color, stroke.Transparency = Color3.new(1, 1, 1), 0.7
+
+local title = Instance.new("TextLabel", frame)
+title.Size = UDim2.new(1, 0, 0, 30)
+title.BackgroundTransparency = 1
+title.Text = "ANGEL HALO / CHINA HAT"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.Font, title.TextSize = Enum.Font.GothamBold, 14
+
+local function makePage()
+	local s = Instance.new("ScrollingFrame", frame)
+	s.Size = UDim2.new(1, 0, 1, -75)
+	s.Position = UDim2.new(0, 0, 0, 70)
+	s.BackgroundTransparency = 1
+	s.BorderSizePixel = 0
+	s.ScrollBarThickness = 3
+	s.CanvasSize = UDim2.new(0, 0, 0, 0)
+	s.Visible = false
+	return s
+end
+local pageH, pageC = makePage(), makePage()
+
+local function tabBtn(text, x)
+	local b = Instance.new("TextButton", frame)
+	b.Size = UDim2.new(0.5, -16, 0, 26)
+	b.Position = UDim2.new(x, x == 0 and 12 or 4, 0, 36)
+	b.Font, b.TextSize, b.Text = Enum.Font.GothamBold, 12, text
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+	return b
+end
+local tabH, tabC = tabBtn("Нимб", 0), tabBtn("China Hat", 0.5)
+local function show(p)
+	pageH.Visible, pageC.Visible = p == pageH, p == pageC
+	tabH.BackgroundColor3 = p == pageH and Color3.new(1, 1, 1) or Color3.fromRGB(45, 45, 45)
+	tabH.TextColor3 = p == pageH and Color3.fromRGB(20, 20, 20) or Color3.new(1, 1, 1)
+	tabC.BackgroundColor3 = p == pageC and Color3.new(1, 1, 1) or Color3.fromRGB(45, 45, 45)
+	tabC.TextColor3 = p == pageC and Color3.fromRGB(20, 20, 20) or Color3.new(1, 1, 1)
+end
+tabH.MouseButton1Click:Connect(function() show(pageH) end)
+tabC.MouseButton1Click:Connect(function() show(pageC) end)
+
+local function slider(page, tbl, name, min, max, key, y)
+	local lbl = Instance.new("TextLabel", page)
+	lbl.Size = UDim2.new(1, -24, 0, 18)
+	lbl.Position = UDim2.new(0, 12, 0, y)
+	lbl.BackgroundTransparency = 1
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextColor3 = Color3.fromRGB(230, 230, 230)
+	lbl.Font, lbl.TextSize = Enum.Font.Gotham, 13
+
+	local track = Instance.new("Frame", page)
+	track.Size = UDim2.new(1, -30, 0, 10)
+	track.Position = UDim2.new(0, 12, 0, y + 22)
+	track.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+	local fill = Instance.new("Frame", track)
+	fill.BackgroundColor3 = Color3.new(1, 1, 1)
+	Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+	local function refresh()
+		fill.Size = UDim2.new((tbl[key] - min) / (max - min), 0, 1, 0)
+		lbl.Text = string.format("%s: %.2f", name, tbl[key])
+	end
+	refresh()
+
+	local dragging = false
+	local function set(x)
+		local r = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+		tbl[key] = min + (max - min) * r
+		refresh()
+	end
+	track.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging, frame.Draggable = true, false
+			set(i.Position.X)
+		end
+	end)
+	UIS.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			set(i.Position.X)
+		end
+	end)
+	UIS.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging, frame.Draggable = false, true
+		end
+	end)
+end
+
+local function toggle(page, tbl, text, y)
+	local b = Instance.new("TextButton", page)
+	b.Size = UDim2.new(1, -30, 0, 26)
+	b.Position = UDim2.new(0, 12, 0, y)
+	b.BackgroundColor3 = Color3.new(1, 1, 1)
+	b.TextColor3 = Color3.fromRGB(20, 20, 20)
+	b.Font, b.TextSize = Enum.Font.GothamBold, 13
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+	local function r() b.Text = text .. (tbl.On and ": ВКЛ" or ": ВЫКЛ") end
+	r()
+	b.MouseButton1Click:Connect(function() tbl.On = not tbl.On r() end)
+end
+
+-- таблица цветов
+local function palette(page, tbl, y)
+	local lbl = Instance.new("TextLabel", page)
+	lbl.Size = UDim2.new(1, -24, 0, 18)
+	lbl.Position = UDim2.new(0, 12, 0, y)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = "Цвет"
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextColor3 = Color3.fromRGB(230, 230, 230)
+	lbl.Font, lbl.TextSize = Enum.Font.Gotham, 13
+
+	local cols, size, gap = 6, 30, 6
+	local swatches = {}
+	local function mark()
+		for _, s in ipairs(swatches) do
+			s.stroke.Transparency = (s.color == tbl.Color) and 0 or 1
+		end
+	end
+	for i, hex in ipairs(PALETTE) do
+		local col = Color3.fromHex(hex)
+		local b = Instance.new("TextButton", page)
+		b.Size = UDim2.new(0, size, 0, size)
+		b.Position = UDim2.new(0, 12 + ((i - 1) % cols) * (size + gap), 0, y + 24 + math.floor((i - 1) / cols) * (size + gap))
+		b.BackgroundColor3 = col
+		b.Text = ""
+		b.AutoButtonColor = false
+		Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+		local st = Instance.new("UIStroke", b)
+		st.Color, st.Thickness, st.Transparency = Color3.fromRGB(255, 80, 80), 2, 1
+		st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		swatches[i] = {color = col, stroke = st}
+		b.MouseButton1Click:Connect(function()
+			tbl.Color = col
+			mark()
+		end)
+	end
+	mark()
+	return y + 24 + math.ceil(#PALETTE / cols) * (size + gap) + 6
+end
+
+-- Нимб
+toggle(pageH, H, "Нимб", 4)
+local hs = {
+	{"Высота", 0.5, 4, "Height"}, {"Ширина", 0.4, 3, "Width"},
+	{"Свечение", 0, 10, "Glow"}, {"Толщина", 0.05, 0.5, "Thick"},
+}
+for i, s in ipairs(hs) do slider(pageH, H, s[1], s[2], s[3], s[4], 38 + (i - 1) * 44) end
+local endH = palette(pageH, H, 38 + #hs * 44)
+pageH.CanvasSize = UDim2.new(0, 0, 0, endH)
+
+-- China Hat
+toggle(pageC, C, "China Hat", 4)
+local cs = {
+	{"Ширина", 0.5, 4, "Width"}, {"Высота", 0.2, 3, "Height"},
+	{"Позиция Y", -1, 3, "Y"}, {"Позиция X", -2, 2, "X"}, {"Позиция Z", -2, 2, "Z"},
+}
+for i, s in ipairs(cs) do slider(pageC, C, s[1], s[2], s[3], s[4], 38 + (i - 1) * 44) end
+local endC = palette(pageC, C, 38 + #cs * 44)
+pageC.CanvasSize = UDim2.new(0, 0, 0, endC)
+
+show(pageH)
+
+UIS.InputBegan:Connect(function(i, gp)
+	if not gp and i.KeyCode == Enum.KeyCode.RightShift then
+		frame.Visible = not frame.Visible
+	end
+end)
